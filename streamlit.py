@@ -3,9 +3,6 @@ import os
 import tempfile
 from datetime import datetime
 
-import geopandas as gpd
-import pandas as pd
-
 import streamlit as st
 from evaluate import analyze_predictions
 
@@ -18,11 +15,6 @@ def save_uploaded_file(uploadedfile):
         return tmp_file.name
 
 
-def create_download_link(data, filename):
-    with open(data, "rb") as file:
-        return file.read()
-
-
 def main():
     st.title("GeoJSON Prediction Evaluation Tool")
 
@@ -31,7 +23,7 @@ def main():
     ### Instructions:
     1. Upload your prediction GeoJSON file
     2. Upload your ground truth (labels) GeoJSON file
-    3. Adjust the IoU threshold if needed
+    3. Adjust the overlap threshold if needed
     4. Click 'Run Analysis' to get results
     """
     )
@@ -48,7 +40,9 @@ def main():
             "Choose ground truth GeoJSON file", type=["geojson"]
         )
 
-    iou_threshold = st.slider("IoU Threshold", 0.0, 1.0, 0.5, 0.05)
+    overlap_threshold = st.slider(
+        "Overlap Threshold for determining TP (%)", 0, 100, 90, 5
+    )
 
     if pred_file and truth_file:
         if st.button("Run Analysis"):
@@ -62,7 +56,7 @@ def main():
                     output_metrics = f"analysis_metrics_{timestamp}.json"
 
                     analyzed_predictions, metrics = analyze_predictions(
-                        pred_path, truth_path, iou_threshold=iou_threshold
+                        pred_path, truth_path, overlap_threshold=overlap_threshold
                     )
 
                     analyzed_predictions.to_file(output_geojson, driver="GeoJSON")
@@ -83,12 +77,8 @@ def main():
 
                         with col2:
                             st.metric("Recall", f"{metrics['recall']:.3f}")
-                            st.metric(
-                                "TP Oversized", metrics["true_positives_oversized"]
-                            )
-                            st.metric(
-                                "TP Undersized", metrics["true_positives_undersized"]
-                            )
+                            st.metric("False Negatives", metrics["false_negatives"])
+                            st.metric("Average IoU", f"{metrics['average_iou']:.3f}")
 
                         with col3:
                             st.metric("F1 Score", f"{metrics['f1_score']:.3f}")
@@ -96,10 +86,7 @@ def main():
                                 "Average Overlap %",
                                 f"{metrics['average_overlap_percentage']:.1f}%",
                             )
-                            st.metric(
-                                "Average Size Ratio",
-                                f"{metrics['average_size_ratio']:.2f}",
-                            )
+                            st.metric("Total Predictions", metrics["total_predictions"])
 
                         st.json(metrics)
 
@@ -132,8 +119,7 @@ def main():
 
                 except Exception as e:
                     st.error(f"An error occurred during analysis: {str(e)}")
-                    st.error(f"An error occurred during analysis: {str(e)}")
-                    st.error(f"An error occurred during analysis: {str(e)}")
 
 
-main()
+if __name__ == "__main__":
+    main()
