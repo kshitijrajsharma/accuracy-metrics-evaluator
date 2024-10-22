@@ -41,7 +41,7 @@ def main():
         )
 
     overlap_threshold = st.slider(
-        "Overlap Threshold for determining TP (%)", 0, 100, 10, 5
+        "Overlap Threshold for determining TP (%)", 0, 100, 5, 5
     )
 
     if pred_file and truth_file:
@@ -97,7 +97,7 @@ def main():
                     with col1:
                         with open(output_geojson, "rb") as f:
                             st.download_button(
-                                "Download Analyzed Predictions",
+                                "Download Analyzed Data",
                                 f,
                                 file_name=output_geojson,
                                 mime="application/json",

@@ -2,6 +2,9 @@ import json
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
+from shapely.geometry import box
+from shapely.ops import unary_union
 
 
 def calculate_overlap_metrics(pred_geom, truth_geom):
@@ -32,7 +35,7 @@ def calculate_overlap_metrics(pred_geom, truth_geom):
         }
 
 
-def classify_prediction(pred_geom, truth_gdf, overlap_threshold=10):
+def classify_prediction(pred_geom, truth_gdf, overlap_threshold=5):
     overlaps = []
     metrics_list = []
 
@@ -48,11 +51,63 @@ def classify_prediction(pred_geom, truth_gdf, overlap_threshold=10):
     max_overlap = overlaps[max_overlap_idx]
     best_metrics = metrics_list[max_overlap_idx]
 
-    classification = "TP" if max_overlap >= 10 else "FP"
+    classification = "TP" if max_overlap >= overlap_threshold else "FP"
     return classification, max_overlap, best_metrics
 
 
-def analyze_predictions(predictions_file, truth_file, overlap_threshold=50):
+def identify_false_negatives(pred_gdf, truth_gdf, overlap_threshold=5):
+    matched_truth_indices = set()
+
+    for idx, pred_row in pred_gdf[pred_gdf["classification"] == "TP"].iterrows():
+        overlaps = []
+        for truth_idx, truth_row in truth_gdf.iterrows():
+            metrics = calculate_overlap_metrics(pred_row.geometry, truth_row.geometry)
+            if metrics["overlap_percentage"] >= overlap_threshold:
+                matched_truth_indices.add(truth_idx)
+
+    false_negatives = truth_gdf.loc[~truth_gdf.index.isin(matched_truth_indices)].copy()
+    false_negatives["classification"] = "FN"
+    false_negatives["overlap_percentage"] = 0
+    false_negatives["iou"] = 0
+    false_negatives["area"] = false_negatives.geometry.area
+
+    return false_negatives
+
+
+def identify_true_negatives(combined_gdf):
+    """
+    Identify true negative regions by subtracting all existing geometries from the bounding box.
+    Returns a GeoDataFrame containing the true negative regions.
+    """
+
+    bounds = combined_gdf.total_bounds
+    bounding_box = box(bounds[0], bounds[1], bounds[2], bounds[3])
+
+    # combine all geom
+    all_geometries = unary_union(combined_gdf.geometry)
+
+    # difference between bounding box and all geometries
+    true_negative_geometry = bounding_box.difference(all_geometries)
+
+    if true_negative_geometry.geom_type == "MultiPolygon":
+        tn_geometries = list(true_negative_geometry.geoms)
+    else:
+        tn_geometries = [true_negative_geometry]
+
+    tn_data = {
+        "geometry": tn_geometries,
+        "classification": ["TN"] * len(tn_geometries),
+        "overlap_percentage": [0] * len(tn_geometries),
+        "iou": [0] * len(tn_geometries),
+        "area": [geom.area for geom in tn_geometries],
+    }
+
+    tn_gdf = gpd.GeoDataFrame(tn_data)
+    # print(tn_gdf)
+    return tn_gdf
+
+
+def analyze_predictions(predictions_file, truth_file, overlap_threshold=5):
     pred_gdf = gpd.read_file(predictions_file)
     truth_gdf = gpd.read_file(truth_file)
 
@@ -64,6 +119,7 @@ def analyze_predictions(predictions_file, truth_file, overlap_threshold=50):
     pred_gdf["iou"] = None
     pred_gdf["area"] = pred_gdf.geometry.area
 
+    # Classify predictions as TP or FP
     for idx, pred_row in pred_gdf.iterrows():
         classification, overlap, metrics = classify_prediction(
             pred_row.geometry, truth_gdf, overlap_threshold
@@ -72,11 +128,20 @@ def analyze_predictions(predictions_file, truth_file, overlap_threshold=50):
         pred_gdf.at[idx, "overlap_percentage"] = metrics["overlap_percentage"]
         pred_gdf.at[idx, "iou"] = metrics["iou"]
 
+    fn_gdf = identify_false_negatives(pred_gdf, truth_gdf, overlap_threshold)
+
+    combined_gdf = gpd.GeoDataFrame(pd.concat([pred_gdf, fn_gdf], ignore_index=True))
+
+    tn_gdf = identify_true_negatives(combined_gdf)
+    print(tn_gdf)
+    final_gdf = gpd.GeoDataFrame(pd.concat([combined_gdf, tn_gdf], ignore_index=True))
+
     total_predictions = len(pred_gdf)
     total_truth = len(truth_gdf)
-    true_positives = sum(pred_gdf["classification"] == "TP")
-    false_positives = sum(pred_gdf["classification"] == "FP")
-    false_negatives = total_truth - true_positives
+    true_positives = sum(final_gdf["classification"] == "TP")
+    false_positives = sum(final_gdf["classification"] == "FP")
+    false_negatives = sum(final_gdf["classification"] == "FN")
+    true_negatives = sum(final_gdf["classification"] == "TN")
 
     precision = (
         true_positives / (true_positives + false_positives)
@@ -94,10 +159,10 @@ def analyze_predictions(predictions_file, truth_file, overlap_threshold=50):
         else 0
     )
 
-    avg_overlap = pred_gdf[pred_gdf["classification"] == "TP"][
+    avg_overlap = final_gdf[final_gdf["classification"] == "TP"][
         "overlap_percentage"
     ].mean()
-    avg_iou = pred_gdf[pred_gdf["classification"] == "TP"]["iou"].mean()
+    avg_iou = final_gdf[final_gdf["classification"] == "TP"]["iou"].mean()
 
     metrics = {
         "total_predictions": total_predictions,
@@ -105,6 +170,7 @@ def analyze_predictions(predictions_file, truth_file, overlap_threshold=50):
         "true_positives": true_positives,
         "false_positives": false_positives,
         "false_negatives": false_negatives,
+        "true_negatives": true_negatives,
         "precision": precision,
         "recall": recall,
         "f1_score": f1_score,
@@ -112,7 +178,7 @@ def analyze_predictions(predictions_file, truth_file, overlap_threshold=50):
         "average_iou": avg_iou,
     }
 
-    return pred_gdf, metrics
+    return final_gdf, metrics
 
 
 def save_results(gdf, output_file, metrics_file=None):
