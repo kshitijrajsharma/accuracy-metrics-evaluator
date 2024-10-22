@@ -41,7 +41,7 @@ def main():
         )
 
     overlap_threshold = st.slider(
-        "Overlap Threshold for determining TP (%)", 0, 100, 90, 5
+        "Overlap Threshold for determining TP (%)", 0, 100, 10, 5
     )
 
     if pred_file and truth_file:

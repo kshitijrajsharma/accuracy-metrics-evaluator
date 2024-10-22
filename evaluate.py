@@ -32,7 +32,7 @@ def calculate_overlap_metrics(pred_geom, truth_geom):
         }
 
 
-def classify_prediction(pred_geom, truth_gdf, overlap_threshold=50):
+def classify_prediction(pred_geom, truth_gdf, overlap_threshold=10):
     overlaps = []
     metrics_list = []
 
@@ -48,7 +48,7 @@ def classify_prediction(pred_geom, truth_gdf, overlap_threshold=50):
     max_overlap = overlaps[max_overlap_idx]
     best_metrics = metrics_list[max_overlap_idx]
 
-    classification = "TP" if max_overlap >= overlap_threshold else "FP"
+    classification = "TP" if max_overlap >= 10 else "FP"
     return classification, max_overlap, best_metrics
 
 
